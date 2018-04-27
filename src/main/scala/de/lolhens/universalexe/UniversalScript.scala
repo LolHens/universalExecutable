@@ -63,18 +63,18 @@ object UniversalScript {
            |  local reading=false
            |  while read -r
            |  do
-           |    ${
+${
           val `return` = Command("return")
           val printf = Command("printf")
-          If('reading.eval,
-            If('REPLY === blockEnd,
+          (If('reading.eval) {
+            If('REPLY === blockEnd) {
               `return`
-            ).Else(Else(
+            } Else {
               printf("%s\\n", 'REPLY)
-            ))
-          ).Else(If('REPLY === blockStart,
+            }
+          } Else If ('REPLY === blockStart) {
             'reading := True.command
-          ))
+          }).string
         }
            |  done
            |}
