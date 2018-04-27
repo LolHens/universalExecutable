@@ -19,41 +19,50 @@ object Shell {
 
     import Value._
 
-    def componentString: String
+    def lines: Seq[String]
 
     def ===(value: Value): Call = test(this, Raw("="), value)
 
     def =!=(value: Value): Call = test(this, Raw("!="), value)
 
-    def eval: Expr = Command(componentString)
+    def eval: Expr // = Command(lines)
   }
 
   object Value {
     private val test = Command("test")
 
     case class Const(const: String) extends Value {
-      override def componentString: String = s"'${const.replace("'", "'\"'\"'")}'"
+      def line: String = s"'${const.replace("'", "'\"'\"'")}'"
+      override def eval: Expr = Command(line)
+
+      override def lines: Seq[String] = Seq(line)
     }
 
     implicit def stringConst(string: String): Const = Const(string)
 
     case class Var(name: String) extends Value {
-      override def componentString: String = s""""$$$name""""
+      def line: String = s""""$$$name""""
+      override def eval: Expr = Command(line)
 
       def :=(value: Value): Assign = Assign(this, value)
+
+      override def lines: Seq[String] = Seq(line)
     }
 
     implicit def symbolVar(symbol: Symbol): Var = Var(symbol.name)
 
     case class Capture(expr: Expr) extends Value {
-      override def componentString: String = s""""$$(${expr.line})""""
+      override def lines: Seq[String] = Seq("\"$(") ++ expr.lines ++ Seq(")\"")
+
       override def eval: Expr = expr
     }
 
     def $(expr: Expr): Capture = Capture(expr)
 
     case class Raw(raw: String) extends Value {
-      override def componentString: String = raw
+      override def lines: Seq[String] = Seq(raw)
+
+      override def eval: Expr = Command(raw)
     }
 
   }
@@ -85,14 +94,11 @@ object Shell {
     override def lines: Seq[String] = sequence.sequenceLines.map(e => s"  $e")
   }
 
-  trait Expr extends MultilineExpr {
-    override def lines: Seq[String] = Seq(line)
-
-    def line: String
-  }
+  trait Expr extends MultilineExpr
 
   case class SingleLine(sequence: Sequence) extends Expr {
-    override def line: String = sequence.sequenceLines.mkString("; ")
+    override def lines: Seq[String] = Seq(line)
+    def line: String = sequence.sequenceLines.mkString("; ")
   }
 
   trait Call extends Expr {
@@ -104,7 +110,7 @@ object Shell {
 
     def apply(args: Value*): Call = withArgs(this.args ++ args)
 
-    override def line: String = command.line + args.map(e => s" ${e.componentString}").mkString
+    override def lines: Seq[String] = Seq(command.name + args.map(e => s" ${e.lines.mkString("\n")}").mkString)
   }
 
   class CallImpl(val command: Command,
@@ -114,9 +120,7 @@ object Shell {
   }
 
   case class Command(name: String) extends Call {
-    def escapedCommand: String = name.replace("\\", "\\\\").replace(" ", "\\ ")
-
-    override def line: String = escapedCommand
+    override def lines: Seq[String] = Seq(name)
 
     override val command: Command = this
     override val args: Seq[Value] = Seq.empty
@@ -125,12 +129,20 @@ object Shell {
     override def withArgs(newArgs: Seq[Value]): Call = new CallImpl(command, newArgs)
   }
 
+  object Command {
+    private def escapedCommand(command: String): String =
+      command.replace("\\", "\\\\").replace(" ", "\\ ")
+
+    def escape(name: String): Command = Command(escapedCommand(name))
+  }
+
   val True = Command("true")
 
   val False = Command("false")
 
   case class Assign(variable: Var, value: Value) extends Expr {
-    override def line: String = s"${variable.name}=${value.componentString}"
+    def line: String = s"${variable.name}=${value.lines.mkString("\n")}"
+    override def lines: Seq[String] = Seq(line)
   }
 
   def local(assign: Assign): Assign = new Assign(assign.variable, assign.value) {
