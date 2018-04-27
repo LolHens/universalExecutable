@@ -5,6 +5,7 @@ import de.lolhens.universalexe.Shell.Value.{Raw, Var}
 import scala.language.implicitConversions
 
 object Shell {
+
   case class Indent(i: Int) extends AnyVal {
     def next: Indent = Indent(i + 1)
     def string: String = "  " * i
@@ -54,30 +55,40 @@ object Shell {
     case class Raw(raw: String) extends Value {
       override def string: String = raw
     }
+
   }
 
   abstract class Sequence {
     def expressions: Seq[MultilineExpr]
 
-    def indentedString(indentation: Int): String = expressions.map(e => "  " * indentation + e.string).mkString("\n")
-  }
+    def indentedString(indentation: Int): String = expressions.map(_.indentedString(indentation)).mkString("\n")
 
-  object Sequence {
-    def apply(sequences: Sequence*): Sequence = new Sequence {
-      override def expressions: Seq[MultilineExpr] = sequences.flatMap(_.expressions)
+    def ++(sequence: Sequence): Sequence = new Sequence {
+      override def expressions: Seq[MultilineExpr] = Sequence.this.expressions ++ sequence.expressions
     }
   }
 
-  case class Block(sequence: Sequence) extends MultilineExpr {
-    override def expressions: Seq[MultilineExpr] = sequence.expressions
+  object Sequence {
+    def apply(exprs: MultilineExpr*): Sequence = new Sequence {
+      override def expressions: Seq[MultilineExpr] = exprs
+    }
 
-    override def indentedString(indentation: Int): String = super.indentedString(indentation + 1)
+    def flatten(sequences: Sequence*): Sequence = Sequence(sequences.flatMap(_.expressions): _*)
   }
 
   abstract class MultilineExpr extends Sequence {
     override def expressions: Seq[MultilineExpr] = Seq(this)
 
-    def string: String = indentedString(0)
+    override def indentedString(indentation: Int): String = "  " * indentation + string
+
+    def string: String
+  }
+
+  case class Block(sequence: Sequence) extends MultilineExpr {
+    //override def expressions: Seq[MultilineExpr] = sequence.expressions
+
+    override def indentedString(indentation: Int): String = sequence.indentedString(indentation + 1)
+    override def string: String = ???
   }
 
   abstract class Expr extends MultilineExpr {
@@ -91,10 +102,10 @@ object Shell {
 
     def escapedCommand: String = command.replace("\\", "\\\\").replace(" ", "\\ ")
 
-    def withCommand(newCommand: String): Command = Command(newCommand, args:_*)
-    def withArgs(newArgs: Seq[Value]): Command = Command(command, newArgs:_*)
+    def withCommand(newCommand: String): Command = Command(newCommand, args: _*)
+    def withArgs(newArgs: Seq[Value]): Command = Command(command, newArgs: _*)
 
-    def apply(args: Value*): Command = Command(command, this.args ++ args:_*)
+    def apply(args: Value*): Command = Command(command, this.args ++ args: _*)
   }
 
   val True = Command("true")
@@ -105,9 +116,29 @@ object Shell {
     override def string: String = s"${variable.name}=${value.string}"
   }
 
+  case class While(expr: MultilineExpr)
+                  (val body: Sequence) extends MultilineExpr {
+
+    import While._
+
+    def sequence: Sequence = Sequence(
+      `while`(Raw(expr.string)),
+      `do`,
+      Block(body),
+      `done`
+    )
+  }
+
+  object While {
+    val `while` = Command("while")
+    val `do` = Command("do")
+    val `done` = Command("done")
+  }
+
   case class If(expr: MultilineExpr)
                (val body: Sequence,
-                elseBranchOption: Option[MultilineExpr] = None) extends MultilineExpr {
+                elseBranchOption: Option[Sequence] = None) extends MultilineExpr {
+
     import If._
 
     override def indentedString(indentation: Int): String = sequence().indentedString(indentation)
@@ -115,8 +146,8 @@ object Shell {
     def sequence(command: Command = `if`): Sequence = Sequence(
       command(Raw(expr.string)),
       Block(body),
+    ) ++
       elseBranch
-    )
 
     def elseBranch: Sequence = elseBranchOption match {
       case Some(elifBranch: If) =>
@@ -124,7 +155,7 @@ object Shell {
 
       case Some(elseBranch) => Sequence(
         `else`,
-        elseBranch,
+        Block(elseBranch),
         `fi`
       )
 
@@ -142,4 +173,5 @@ object Shell {
     val `else` = Command("else")
     val `fi` = Command("fi")
   }
+
 }

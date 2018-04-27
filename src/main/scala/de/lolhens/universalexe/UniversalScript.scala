@@ -64,9 +64,13 @@ object UniversalScript {
            |  while read -r
            |  do
 ${
+          val local = Command("local")
           val `return` = Command("return")
           val printf = Command("printf")
-          (If('reading.eval) {
+          val read = Command("read")
+          Sequence(
+            local("reading=false"),
+            While(read("-r")){If('reading.eval) {
             If('REPLY === blockEnd) {
               `return`
             } Else {
@@ -74,7 +78,8 @@ ${
             }
           } Else If ('REPLY === blockStart) {
             'reading := True.command
-          }).string
+          }
+          }).indentedString(0)
         }
            |  done
            |}
