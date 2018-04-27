@@ -64,12 +64,11 @@ object UniversalScript {
            |  while read -r
            |  do
 ${
-          val local = Command("local")
           val `return` = Command("return")
           val printf = Command("printf")
           val read = Command("read")
           Sequence(
-            local("reading=false"),
+            local('reading := False.name),
             While(read("-r")){If('reading.eval) {
             If('REPLY === blockEnd) {
               `return`
@@ -77,9 +76,9 @@ ${
               printf("%s\\n", 'REPLY)
             }
           } Else If ('REPLY === blockStart) {
-            'reading := True.command
+            'reading := True.name
           }
-          }).indentedString(0)
+          }).sequenceLines.mkString("\n")
         }
            |  done
            |}

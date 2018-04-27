@@ -15,30 +15,30 @@ object Shell {
     val initial: Indent = Indent(0)
   }
 
-  trait ShellScript {
-    def string: String
+  trait Value {
 
-    override def toString: String = string
-  }
+    import Value._
 
-  abstract class Value extends ShellScript {
-    def ===(value: Value): Command = Command("test")(this, Raw("="), value)
+    def componentString: String
 
-    def =!=(value: Value): Command = Command("test")(this, Raw("!="), value)
+    def ===(value: Value): Call = test(this, Raw("="), value)
 
-    def eval: Expr = Command(string)
+    def =!=(value: Value): Call = test(this, Raw("!="), value)
+
+    def eval: Expr = Command(componentString)
   }
 
   object Value {
+    private val test = Command("test")
 
     case class Const(const: String) extends Value {
-      override def string: String = s"'${const.replace("'", "'\"'\"'")}'"
+      override def componentString: String = s"'${const.replace("'", "'\"'\"'")}'"
     }
 
     implicit def stringConst(string: String): Const = Const(string)
 
     case class Var(name: String) extends Value {
-      override def string: String = s""""$$$name""""
+      override def componentString: String = s""""$$$name""""
 
       def :=(value: Value): Assign = Assign(this, value)
     }
@@ -46,66 +46,83 @@ object Shell {
     implicit def symbolVar(symbol: Symbol): Var = Var(symbol.name)
 
     case class Capture(expr: Expr) extends Value {
-      override def string: String = s""""$$(${expr.string})""""
+      override def componentString: String = s""""$$(${expr.line})""""
       override def eval: Expr = expr
     }
 
     def $(expr: Expr): Capture = Capture(expr)
 
     case class Raw(raw: String) extends Value {
-      override def string: String = raw
+      override def componentString: String = raw
     }
 
   }
 
-  abstract class Sequence {
-    def expressions: Seq[MultilineExpr]
-
-    def indentedString(indentation: Int): String = expressions.map(_.indentedString(indentation)).mkString("\n")
+  trait Sequence {
+    def sequenceExpressions: Seq[MultilineExpr]
+    def sequenceLines: Seq[String] = sequenceExpressions.flatMap(_.lines)
 
     def ++(sequence: Sequence): Sequence = new Sequence {
-      override def expressions: Seq[MultilineExpr] = Sequence.this.expressions ++ sequence.expressions
+      override def sequenceExpressions: Seq[MultilineExpr] = Sequence.this.sequenceExpressions ++ sequence.sequenceExpressions
     }
   }
 
   object Sequence {
     def apply(exprs: MultilineExpr*): Sequence = new Sequence {
-      override def expressions: Seq[MultilineExpr] = exprs
+      override def sequenceExpressions: Seq[MultilineExpr] = exprs
     }
 
-    def flatten(sequences: Sequence*): Sequence = Sequence(sequences.flatMap(_.expressions): _*)
+    def flatten(sequences: Sequence*): Sequence = Sequence(sequences.flatMap(_.sequenceExpressions): _*)
   }
 
-  abstract class MultilineExpr extends Sequence {
-    override def expressions: Seq[MultilineExpr] = Seq(this)
+  trait MultilineExpr extends Sequence {
+    override def sequenceExpressions: Seq[MultilineExpr] = Seq(this)
 
-    override def indentedString(indentation: Int): String = "  " * indentation + string
-
-    def string: String
+    def lines: Seq[String]
   }
 
   case class Block(sequence: Sequence) extends MultilineExpr {
-    //override def expressions: Seq[MultilineExpr] = sequence.expressions
-
-    override def indentedString(indentation: Int): String = sequence.indentedString(indentation + 1)
-    override def string: String = ???
+    override def lines: Seq[String] = sequence.sequenceLines.map(e => s"  $e")
   }
 
-  abstract class Expr extends MultilineExpr {
-    override def expressions: Seq[Expr] = Seq(this)
+  trait Expr extends MultilineExpr {
+    override def lines: Seq[String] = Seq(line)
+
+    def line: String
   }
 
-  //case class OnSingleLine(multilineExpr: MultilineExpr) extends Expr
+  case class SingleLine(sequence: Sequence) extends Expr {
+    override def line: String = sequence.sequenceLines.mkString("; ")
+  }
 
-  case class Command(command: String, args: Value*) extends Expr {
-    override def string: String = escapedCommand + args.map(e => s" ${e.string}").mkString
+  trait Call extends Expr {
+    val command: Command
+    val args: Seq[Value]
 
-    def escapedCommand: String = command.replace("\\", "\\\\").replace(" ", "\\ ")
+    def withCommand(newCommand: Command): Call
+    def withArgs(newArgs: Seq[Value]): Call
 
-    def withCommand(newCommand: String): Command = Command(newCommand, args: _*)
-    def withArgs(newArgs: Seq[Value]): Command = Command(command, newArgs: _*)
+    def apply(args: Value*): Call = withArgs(this.args ++ args)
 
-    def apply(args: Value*): Command = Command(command, this.args ++ args: _*)
+    override def line: String = command.line + args.map(e => s" ${e.componentString}").mkString
+  }
+
+  class CallImpl(val command: Command,
+                 val args: Seq[Value]) extends Call {
+    override def withCommand(newCommand: Command): Call = new CallImpl(newCommand, args)
+    override def withArgs(newArgs: Seq[Value]): Call = new CallImpl(command, newArgs)
+  }
+
+  case class Command(name: String) extends Call {
+    def escapedCommand: String = name.replace("\\", "\\\\").replace(" ", "\\ ")
+
+    override def line: String = escapedCommand
+
+    override val command: Command = this
+    override val args: Seq[Value] = Seq.empty
+
+    override def withCommand(newCommand: Command): Command = this
+    override def withArgs(newArgs: Seq[Value]): Call = new CallImpl(command, newArgs)
   }
 
   val True = Command("true")
@@ -113,16 +130,26 @@ object Shell {
   val False = Command("false")
 
   case class Assign(variable: Var, value: Value) extends Expr {
-    override def string: String = s"${variable.name}=${value.string}"
+    override def line: String = s"${variable.name}=${value.componentString}"
+  }
+
+  def local(assign: Assign): Assign = new Assign(assign.variable, assign.value) {
+    override def line: String = s"local ${super.line}"
+  }
+
+  trait Construct extends MultilineExpr {
+    override def lines: Seq[String] = sequence.sequenceLines
+
+    def sequence: Sequence
   }
 
   case class While(expr: MultilineExpr)
-                  (val body: Sequence) extends MultilineExpr {
+                  (val body: Sequence) extends Construct {
 
     import While._
 
     def sequence: Sequence = Sequence(
-      `while`(Raw(expr.string)),
+      `while`(Raw(expr.lines.mkString("\n"))),
       `do`,
       Block(body),
       `done`
@@ -130,28 +157,28 @@ object Shell {
   }
 
   object While {
-    val `while` = Command("while")
-    val `do` = Command("do")
-    val `done` = Command("done")
+    private val `while` = Command("while")
+    private val `do` = Command("do")
+    private val `done` = Command("done")
   }
 
   case class If(expr: MultilineExpr)
                (val body: Sequence,
-                elseBranchOption: Option[Sequence] = None) extends MultilineExpr {
+                elseBranchOption: Option[Sequence] = None) extends Construct {
 
     import If._
 
-    override def indentedString(indentation: Int): String = sequence().indentedString(indentation)
+    def sequence: Sequence = condition(`if`)
 
-    def sequence(command: Command = `if`): Sequence = Sequence(
-      command(Raw(expr.string)),
+    def condition(command: Call): Sequence = Sequence(
+      command(Raw(expr.lines.mkString("\n"))),
       Block(body),
     ) ++
       elseBranch
 
     def elseBranch: Sequence = elseBranchOption match {
       case Some(elifBranch: If) =>
-        elifBranch.sequence(`elif`)
+        elifBranch.condition(`elif`)
 
       case Some(elseBranch) => Sequence(
         `else`,
@@ -167,11 +194,11 @@ object Shell {
   }
 
   object If {
-    val `if` = Command("if")
-    val `then` = Command("then")
-    val `elif` = Command("elif")
-    val `else` = Command("else")
-    val `fi` = Command("fi")
+    private val `if` = Command("if")
+    private val `then` = Command("then")
+    private val `elif` = Command("elif")
+    private val `else` = Command("else")
+    private val `fi` = Command("fi")
   }
 
 }
