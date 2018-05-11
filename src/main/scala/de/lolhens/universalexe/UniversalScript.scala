@@ -105,6 +105,7 @@ ${
   )
 
   def main(args: Array[String]): Unit = {
-    println(unpackBlock("testblock", "/tmp/file1").string)
+    //println(unpackBlock("testblock", "/tmp/file1").string)
+    println(TestCaseClass("test", 3))
   }
 }

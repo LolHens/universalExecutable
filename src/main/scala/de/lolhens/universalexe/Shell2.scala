@@ -1,10 +1,14 @@
 package de.lolhens.universalexe
 
+import de.lolhens.universalexe.Shell2.Value.Var
+
 object Shell2 {
   trait Exprs {
     def exprs: Seq[Expr]
 
-    def withExprs(exprs: Seq[Expr]): Block
+    def withExprs(newExprs: Seq[Expr]): Block = new Block {
+      override def exprs: Seq[Expr] = newExprs
+    }
 
     def ++(block: Block): Block = withExprs(exprs ++ block.exprs)
 
@@ -17,6 +21,12 @@ object Shell2 {
 
   trait Expr extends Block {
     final override def exprs: Seq[Expr] = Seq(this)
+
+    override final def script(singleLine: Boolean): String = script
+
+    override final def withExprs(newExprs: Seq[Expr]): Block = new Block {
+      override def exprs: Seq[Expr] = newExprs
+    }
 
     def script: String
   }
@@ -45,6 +55,13 @@ object Shell2 {
 
   }
 
+
+  trait Assign extends Expr {
+    def variable: Var
+    def value: Value
+
+    override def script: String = s"${variable.name}=${value.script}"
+  }
 
   trait Call extends Expr {
     def command: Command

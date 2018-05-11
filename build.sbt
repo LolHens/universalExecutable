@@ -1,11 +1,11 @@
 name := "universal-executable"
 version := "1.0.0"
 
-scalaVersion := "2.12.4"
+scalaVersion := "2.12.6"
 
 def universalScript(shellCommands: String,
                     cmdCommands: String,
-                    shebang: Boolean = false): String = {
+                    shebang: Boolean): String = {
   Seq(
     if (shebang) "#!/usr/bin/env sh" else "",
     "@ 2>/dev/null # 2>nul & echo off & goto BOF\r",
